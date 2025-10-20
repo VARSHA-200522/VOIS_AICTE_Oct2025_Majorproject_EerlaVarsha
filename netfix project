@@ -1,0 +1,113 @@
+# Netflix Data Analysis - Full Notebook Script
+# Requirements:
+#   pip install pandas numpy matplotlib seaborn plotly wordcloud openpyxl
+# (openpyxl needed if you export to excel)
+
+# --------------------------
+# 0. Imports and settings
+# --------------------------
+import os
+from datetime import datetime
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px        # optional interactive plots
+from wordcloud import WordCloud
+sns.set(style="whitegrid")
+plt.rcParams['figure.figsize'] = (10, 6)
+
+# --------------------------
+# 1. Configuration
+# --------------------------
+DATA_PATH = "netflix_titles.csv"   # change if dataset located elsewhere
+EXPORT_DIR = "output"
+os.makedirs(EXPORT_DIR, exist_ok=True)
+
+# --------------------------
+# 2. Load dataset
+# --------------------------
+df = pd.read_csv(DATA_PATH)
+print("Loaded dataset shape:", df.shape)
+df.head()
+
+# --------------------------
+# 3. Quick data overview
+# --------------------------
+print("\n--- Info ---")
+df.info()
+print("\n--- Missing values per column ---")
+print(df.isna().sum())
+
+# --------------------------
+# 4. Basic cleanup & feature engineering
+# --------------------------
+# 4.1 Standardize column names (optional)
+df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+# 4.2 Convert date_added to datetime
+if 'date_added' in df.columns:
+    df['date_added'] = pd.to_datetime(df['date_added'], errors='coerce')
+
+# 4.3 Separate duration into numeric value and unit (for movies "min", for shows "Seasons")
+if 'duration' in df.columns:
+    # create duration_num and duration_unit
+    df['duration'] = df['duration'].astype(str).replace('nan', np.nan)
+    def parse_duration(d):
+        if pd.isna(d): 
+            return (np.nan, np.nan)
+        parts = d.split()
+        if len(parts) >= 2 and parts[-1].lower().startswith('season'):
+            # "2 Seasons" or "1 Season"
+            try:
+                return (int(parts[0]), 'Seasons')
+            except:
+                return (np.nan, 'Seasons')
+        else:
+            # assume minutes like "90 min"
+            try:
+                return (int(parts[0]), 'Minutes')
+            except:
+                return (np.nan, 'Minutes')
+    dur = df['duration'].apply(parse_duration)
+    df['duration_val'] = dur.apply(lambda x: x[0])
+    df['duration_unit'] = dur.apply(lambda x: x[1])
+
+# 4.4 Split multiple values columns into lists (for genre, country, cast, director)
+multi_cols = ['listed_in', 'country', 'cast', 'director']
+for c in multi_cols:
+    if c in df.columns:
+        df[c + '_list'] = df[c].fillna('').apply(lambda x: [s.strip() for s in x.split(',')] if x != '' else [])
+
+# 4.5 Extract release year as int (if available)
+if 'release_year' in df.columns:
+    df['release_year'] = pd.to_numeric(df['release_year'], errors='coerce').astype('Int64')
+
+# --------------------------
+# 5. Basic descriptive stats
+# --------------------------
+print("\n--- Basic descriptive stats ---")
+print("Total titles:", df.shape[0])
+print("Count by type:\n", df['type'].value_counts(dropna=False))
+print("Unique genres sample:", df['listed_in'].dropna().head(5).tolist())
+print("Year range:", df['release_year'].min(), "to", df['release_year'].max())
+
+# --------------------------
+# 6. Exploratory Analysis & Visualizations
+# --------------------------
+
+# 6.1 Releases by year (count)
+plt.figure(figsize=(12,5))
+release_counts = df.groupby('release_year').size().dropna()
+release_counts = release_counts[release_counts.index.notna()].sort_index()
+sns.lineplot(x=release_counts.index, y=release_counts.values)
+plt.title('Number of Titles by Release Year')
+plt.xlabel('Release Year')
+plt.ylabel('Number of Titles')
+plt.tight_layout()
+plt.savefig(os.path.join(EXPORT_DIR, 'titles_by_year.png'), dpi=150)
+plt.show()
+
+# 6.2 Titles added per year (by date_added)
+if 'date_added' in df.columns:
+    df['added_year'] = df['date_added'].dt.year
